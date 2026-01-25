@@ -16,12 +16,12 @@ jobs:
             variant: SPIRAM_OCT
             flash_size: 16
             display: ili9341
-            indev: gt911
+            indev: ft6x36
           - board: ESP32_GENERIC_C3
             variant: ""
             flash_size: 4
             display: st7789
-            indev: ft6x36
+            indev: ""
           - board: ESP32_GENERIC
             variant: SPIRAM
             flash_size: 4
