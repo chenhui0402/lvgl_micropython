@@ -12,26 +12,16 @@ jobs:
       fail-fast: false
       matrix:  # 列出所有要构建的板子/配置
         include:
-          - board: ESP32_GENERIC_S3
-            variant: SPIRAM_OCT
-            flash_size: 16
+          - board: ESP32_GENERIC_C3
+            variant: ""
+            flash_size: 4
             display: ili9341
-            indev: ft6x36
+            indev: xpt2046
           - board: ESP32_GENERIC_C3
             variant: ""
             flash_size: 4
             display: st7789
             indev: ""
-          - board: ESP32_GENERIC
-            variant: SPIRAM
-            flash_size: 4
-            display: st7735
-            indev: ""
-          - board: ESP32_GENERIC
-            variant: SPIRAM
-            flash_size: 4
-            display: ili9341
-            indev: xpt2046
 
     steps:
     # 1. 检出源码
@@ -39,7 +29,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive      # 递归拉取所有子模块
-        fetch-depth: 0            # 拉取完整历史，便于后续版本识别
+        fetch-depth: 1            # 拉取完整历史，便于后续版本识别
 
     # 2. 安装系统依赖
     - name: 2.安装 Ubuntu 系统级编译依赖
