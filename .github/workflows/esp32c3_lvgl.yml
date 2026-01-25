@@ -1,0 +1,159 @@
+name: build lvgl_micropython (ESP32C3 Min Size)
+
+on:
+  workflow_dispatch:  # 仅手动触发
+
+jobs:
+  build_esp32c3_min:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:  # 仅保留ESP32C3配置（专注最小化）
+        include:
+          - board: ESP32_GENERIC_C3
+            variant: ""
+            flash_size: 4
+            display: st7789
+            indev: ft6x36
+
+    steps:
+    # 1. 检出源码（浅克隆，仅拉取必需内容）
+    - name: 1.检出 lvgl_micropython 主仓库
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 1  # 浅克隆，仅拉取最新版本（减小下载体积）
+
+    # 2. 安装系统依赖
+    - name: 2.安装 Ubuntu 编译依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential pkg-config cmake ninja-build ccache
+
+    # 3. 设置 Python 3.11
+    - name: 3.配置 Python 3.11 环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    # 4. 缓存 ESP-IDF（加速编译）
+    - name: 4.加载 ESP-IDF 缓存
+      id: cache-deps
+      uses: actions/cache@v4
+      with:
+        path: |
+          lib/esp-idf
+          ~/.espressif
+        key: ${{ runner.os }}-esp32c3-deps-min
+
+    # 5. 拉取 ESP-IDF（缓存未命中时）
+    - name: 5.拉取 ESP-IDF 并安装工具链
+      if: steps.cache-deps.outputs.cache-hit != 'true'
+      run: |
+        git submodule update --init --depth 1 --jobs 4 -- lib/esp-idf
+        cd lib/esp-idf
+        git submodule update --init --depth 1 --jobs 4 -- components/esp_wifi components/esptool_py/esptool
+        ./install.sh esp32c3  # 仅安装ESP32C3工具链（减小体积）
+        cd ../..
+
+    # 6. 关键：裁剪 LVGL 配置（最小化）
+    - name: 6.修改 LVGL 配置文件（减小体积）
+      run: |
+        # 替换lv_conf.h为最小化配置
+        cat > lib/lvgl/lv_conf.h << EOF
+        #ifndef LV_CONF_H
+        #define LV_CONF_H
+        #define LV_USE_DEBUG 0          // 关闭调试
+        #define LV_USE_DEMO 0           // 关闭所有LVGL示例
+        #define LV_MEM_SIZE 32U * 1024U // 内存池从128KB减到32KB
+        #define LV_FONT_DEFAULT &lv_font_montserrat_8  // 最小默认字体
+        #define LV_USE_FONT_MONTSERRAT_8 1
+        #define LV_USE_FONT_MONTSERRAT_10 0
+        #define LV_USE_FONT_MONTSERRAT_12 1
+        #define LV_USE_FONT_MONTSERRAT_14 1
+        #define LV_USE_FONT_MONTSERRAT_16 1
+        #define LV_USE_FONT_MONTSERRAT_18 0
+        #define LV_USE_FONT_MONTSERRAT_20 1
+        #define LV_USE_FONT_MONTSERRAT_22 0
+        #define LV_USE_FONT_MONTSERRAT_24 1
+        #define LV_USE_ANIMATION 1      // 关闭动画（减小体积）
+        #define LV_USE_CHART 1          // 关闭图表控件
+        #define LV_USE_TABVIEW 1        // 关闭标签页控件
+        #define LV_USE_LIST 1           // 关闭列表控件（按需开启）
+        #define LV_USE_BUTTON 1         // 仅保留按钮控件
+        #define LV_USE_LABEL 1          // 仅保留文本控件
+        #define LV_USE_DISP_DRIVER_ST7789 1 // 仅保留当前显示屏驱动
+        #define LV_USE_INDEV_DRIVER_FT6X36 0 // 仅保留当前触摸驱动
+        #define LV_USE_DISP_DRIVER_ILI9341 0 // 关闭其他显示屏驱动
+        #define LV_USE_DISP_DRIVER_ST7735 0
+        #define LV_USE_INDEV_DRIVER_GT911 0 // 关闭其他触摸驱动
+        #define LV_USE_INDEV_DRIVER_XPT2046 0
+        #endif
+        EOF
+
+    # 7. 关键：修改 MicroPython 配置（最小化）
+    - name: 7.修改 MicroPython 配置（关闭不必要功能）
+      run: |
+        # 修改ESP32C3的MicroPython配置
+        cat > lib/micropython/ports/esp32/mpconfigport.h << EOF
+        #include "mpconfigport_common.h"
+        #define MICROPY_PY_BLUETOOTH 0          // 关闭蓝牙
+        #define MICROPY_PY_WEBREPL 0            // 关闭WebREPL
+        #define MICROPY_PY_HTTP_CLIENT 0        // 关闭HTTP客户端
+        #define MICROPY_HISTORY_SIZE 0          // 关闭REPL历史
+        #define MICROPY_PY_JSON 0               // 关闭JSON模块（按需开启）
+        #define MICROPY_PY_UCTYPES 0            // 关闭uctypes模块
+        #define MICROPY_OPT_SMALL_HEAP 1        // 启用小堆内存优化
+        EOF
+
+    # 8. 激活 ESP-IDF 环境
+    - name: 8.激活 ESP-IDF 环境
+      run: |
+        export "IDF_PATH=$GITHUB_WORKSPACE/lib/esp-idf"
+        . ./lib/esp-idf/export.sh
+      env:
+        IDF_PATH: ${{ github.workspace }}/lib/esp-idf
+
+    # 9. 关键：编译固件（启用所有体积优化参数）
+    - name: 9.编译 ESP32C3 最小化固件
+      run: |
+        # 组装优化后的编译参数
+        opts=()
+        opts+=("BOARD=${{ matrix.board }}")
+        opts+=("--flash-size=${{ matrix.flash_size }}")
+        opts+=("DISPLAY=${{ matrix.display }}")
+        opts+=("INDEV=${{ matrix.indev }}")
+        opts+=("--optimize-size")  # MicroPython体积优化
+        # 编译器级别优化（-Oz是极致体积优化，比-Os更小）
+        export CFLAGS="-Oz -DNDEBUG"
+        export CPPFLAGS="-Oz -DNDEBUG"
+        # 关闭LVGL示例、启用ESP-IDF体积优化
+        export LVGL_MICROPYTHON_DISABLE_DEMO=1
+        export IDF_CMAKE_ARGS="-DCONFIG_COMPILER_OPTIMIZATION_SIZE=y -DCONFIG_LOG_DEFAULT_LEVEL_NONE=y"
+        # 执行编译
+        python3 make.py esp32 "${opts[@]}"
+
+    # 10. 收集并上传最小化固件
+    - name: 10.收集并上传固件
+      run: |
+        ARTIFACTS_DIR="$HOME/artifacts"
+        mkdir -p "$ARTIFACTS_DIR"
+        BUILD_DIR="${{ github.workspace }}/lib/micropython/ports/esp32"
+        BOARD_NAME="${{ matrix.board }}"
+        FW_PATH="${BUILD_DIR}/build-${BOARD_NAME}/firmware.bin"
+        # 文件名标注“min”表示最小化
+        OUT_NAME="lvgl_mpy_${{ matrix.board }}_${{ matrix.flash_size }}MB_${{ matrix.display }}_${{ matrix.indev }}_MIN.bin"
+        if [[ -f "$FW_PATH" ]]; then
+          cp "$FW_PATH" "$ARTIFACTS_DIR/$OUT_NAME"
+          # 输出固件体积（便于验证优化效果）
+          ls -lh "$ARTIFACTS_DIR/$OUT_NAME"
+        else
+          echo "Firmware not found!"
+          exit 1
+        fi
+
+    - name: 11.上传最小化固件
+      uses: actions/upload-artifact@v4
+      with:
+        name: esp32c3_lvgl_mpy_min_size
+        path: ~/artifacts/*.bin
