@@ -14,7 +14,7 @@ jobs:
             variant: ""
             flash_size: 4
             display: st7789
-            indev: xpt2046
+            indev: ""
 
     steps:
     # 1. 检出源码（浅克隆，仅拉取必需内容）
